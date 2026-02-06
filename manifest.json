@@ -3,7 +3,7 @@
   "name": "Chat Export MVP",
   "version": "0.1",
   "permissions": ["activeTab", "scripting", "downloads"],
-  "host_permissions": ["https://chat.openai.com/*"],
+  "host_permissions": ["https://chatgpt.com/*"],
   "action": {
     "default_title": "Export current chat"
   },
