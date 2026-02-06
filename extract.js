@@ -1,5 +1,6 @@
 console.log ("extract.js loaded");
 
+
 //Prevent double-registration if Chrome reinjects
 if (window.__CHATGPT_EXPORTER__) {
     console.log("Exporter already initialised");
@@ -17,38 +18,34 @@ if (window.__CHATGPT_EXPORTER__) {
     runExport();
 }
 
-async function exportAttachments(attachments) {
-    // Prepare JSON references
-    const jsonref = attachments.map(att => ({
-        type: att.type,
-        filename: att.filename, 
-        path: 'files/${att.filename}'
-    }));
+// async function exportAttachments(attachments) {
+    
 
-    const zip = new JSZip();
-    zip.file("attacments.json", JSON.stringify(jsonref, null, 2));
+//     const zip = new JSZip();
+    
 
-    // Add each file
-    for (const att of attachments) {
-        try {
-            const res = await fetch(att.url, { credentials: "include" });
-            if (!res.ok) throw new Error('Failed: ${att.url}');
-            const blob = await res.blob();
-            zip.file('files/$att.filename}', blob);
+//     // Add each file
+//     for (const att of attachments) {
+//         try {
+//             const res = await fetch(att.url, { credentials: "include" });
+//             if (!res.ok) throw new Error('Failed: ${att.url}');
+//             const blob = await res.blob();
+//             zip.file('files/$att.filename}', blob);
 
-        } catch (err) {
-            console.error("Error downloading ${att.filename}:", err);
-        }
-    }
+//         } catch (err) {
+//             console.error("Error downloading ${att.filename}:", err);
+//         }
+//     }
 
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(zipBlob);
-    a.download = "chatgpt_export.zip";
-    a.click();
-}
+//     const zipBlob = await zip.generateAsync({ type: 'blob' });
+//     const a = document.createElement("a");
+//     a.href = URL.createObjectURL(zipBlob);
+//     a.download = "chatgpt_export.zip";
+//     a.click();
+// }
 
 async function downloadAttachmentsToZip(attachments) {
+    
     const zip = new JSZip();
 
     for (const att of attachments) {
@@ -64,6 +61,15 @@ async function downloadAttachmentsToZip(attachments) {
             console.error("Error downloading ${att.filename}:", err);
         }
     }
+
+    // Prepare JSON references
+    const jsonref = attachments.map(att => ({
+        type: att.type,
+        filename: att.filename, 
+        path: 'files/${att.filename}'
+    }));
+
+    zip.file("attachments.json", JSON.stringify(jsonref, null, 2));
 
     // Generate zip as blob
     const zipBlob = await zip.generateAsync({ type: "blob"});
@@ -81,6 +87,7 @@ function runExport() {
 
     const nodes = document.querySelectorAll('[data-message-author-role]');
     const messages = [];
+    const allAttachments = [];
 
     nodes.forEach((node) => {
         const role = node.getAttribute("data-message-author-role");
@@ -88,22 +95,25 @@ function runExport() {
 
         const attachments = [];
 
+        // Extract Images
         node.querySelectorAll("img").forEach((img) => {
             const src = img.src;
             if (!src) return;
 
             if (src.includes("chatgpt.com/backend-api/estuary/content")) {
-                attachments.push({
+                const filename = img.alt?.trim() || 'img_${allAttachments.length}.png';
+                const attachment = {
                     type: "image",
-                    filename:
-                    img.alt?.trim() ||
-                    'image_${attachments.length}.png',
+                    filename,
                     url: src
-                })
+                };
+
+                attachments.push(attachment);
+                allAttachments.push(attachment); // add to global list
             }
         });
 
-        if (content) {
+        if (content || attachments.length) {
             messages.push({ role, content, attachments });
         }
     });
@@ -112,7 +122,9 @@ function runExport() {
         console.warn("No messages found");
         return;
     }
+
     
+    // Export JSON of conversation
     const payload = {
         source: "chatgpt.com",
         url: window.location.href,
@@ -136,4 +148,7 @@ function runExport() {
     //Cleanup
 
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    // Export attachments as zip
+    downloadAttachmentsToZip(allAttachments);
 }
