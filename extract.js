@@ -1,48 +1,58 @@
 console.log ("extract.js loaded");
 
+async function waitForJSZip() {
+    return new Promise((resolve, reject) => {
+        const maxWait = 5000; // 5 second timeout
+        const start = Date.now();
 
-//Prevent double-registration if Chrome reinjects
-if (window.__CHATGPT_EXPORTER__) {
-    console.log("Exporter already initialised");
-} else {
-    window.__CHATGPT_EXPORTER__ = true;
+        function check(){
+            if (window.JSZip) {
+                resolve();
 
-    chrome.runtime.onMessage.addListener((msg) => {
-        if (msg.type === "EXPORT") {
-            runExport();
+            } else if (Date.now - start > maxWait) {
+                reject(new Error("JSZip not loaded"));
+
+            } else {
+                setTimeout(check, 50);
+            }
         }
+
+        check();
     });
-
-    //Auto-run on first inject
-
-    runExport();
+    
 }
 
-// async function exportAttachments(attachments) {
-    
+(async () => {
+    try {
+        await waitForJSZip();
 
-//     const zip = new JSZip();
-    
+        console.log("JSZip loaded: ", !!window.JSZip);
 
-//     // Add each file
-//     for (const att of attachments) {
-//         try {
-//             const res = await fetch(att.url, { credentials: "include" });
-//             if (!res.ok) throw new Error('Failed: ${att.url}');
-//             const blob = await res.blob();
-//             zip.file('files/$att.filename}', blob);
+        //Prevent double-registration if Chrome reinjects
+        if (window.__CHATGPT_EXPORTER__) {
+            console.log("Exporter already initialised");
+        } else {
+            window.__CHATGPT_EXPORTER__ = true;
 
-//         } catch (err) {
-//             console.error("Error downloading ${att.filename}:", err);
-//         }
-//     }
+            chrome.runtime.onMessage.addListener((msg) => {
+                if (msg.type === "EXPORT") {
+                    runExport();
+                }
+            });
 
-//     const zipBlob = await zip.generateAsync({ type: 'blob' });
-//     const a = document.createElement("a");
-//     a.href = URL.createObjectURL(zipBlob);
-//     a.download = "chatgpt_export.zip";
-//     a.click();
-// }
+            //Auto-run on first inject
+
+            runExport();
+        }
+
+    } catch (err) {
+        console.error("JSZip failed to load:", err);
+    }
+})();
+
+
+
+
 
 async function downloadAttachmentsToZip(attachments) {
     
@@ -51,14 +61,14 @@ async function downloadAttachmentsToZip(attachments) {
     for (const att of attachments) {
         try {
             const res = await fetch(att.url, { credentials: "include" });
-            if (!res.ok) throw new Error('Failed to fetch ${att.url}');
+            if (!res.ok) throw new Error(`Failed to fetch ${att.url}`);
 
             const blob = await res.blob();
             zip.file(att.filename, blob); //add to zip
-            console.log('Added: ${att.filename}');
+            console.log(`Added: ${att.filename}`);
         
         } catch (err) {
-            console.error("Error downloading ${att.filename}:", err);
+            console.error(`Error downloading ${att.filename}:`, err);
         }
     }
 
@@ -66,7 +76,7 @@ async function downloadAttachmentsToZip(attachments) {
     const jsonref = attachments.map(att => ({
         type: att.type,
         filename: att.filename, 
-        path: 'files/${att.filename}'
+        path: `files/${att.filename}`
     }));
 
     zip.file("attachments.json", JSON.stringify(jsonref, null, 2));
@@ -101,10 +111,10 @@ function runExport() {
             if (!src) return;
 
             if (src.includes("chatgpt.com/backend-api/estuary/content")) {
-                const filename = img.alt?.trim() || 'img_${allAttachments.length}.png';
+                const filename = `img_${allAttachments.length}.png`;
                 const attachment = {
                     type: "image",
-                    filename,
+                    filename: filename,
                     url: src
                 };
 
