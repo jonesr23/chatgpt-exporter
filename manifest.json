@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Chat Export MVP",
+  "version": "0.1",
+  "permissions": ["activeTab", "scripting", "downloads"],
+  "host_permissions": ["https://chat.openai.com/*"],
+  "action": {
+    "default_title": "Export current chat"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
