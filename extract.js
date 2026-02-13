@@ -42,7 +42,7 @@ async function waitForJSZip() {
 
             //Auto-run on first inject
 
-            runExport();
+            insertExportButton();
         }
 
     } catch (err) {
@@ -186,3 +186,51 @@ function runExport() {
     // Export attachments as zip
     downloadAttachmentsToZip(allAttachments);
 }
+
+function createExportButton(){
+    const btn = document.createElement("button");
+    btn.id = "chatgpt-export-btn";
+    btn.innerText = "Export";
+    btn.style.marginLeft = "8px";
+    btn.style.padding = "6px 12px";
+    btn.style.backgroundColor = "#10a37f";
+    btn.style.color = "white";
+    btn.style.border = "none";
+    btn.style.borderRadius = "4px";
+    btn.style.cursor = "pointer";
+    btn.style.fontSize = "14px";
+
+    // Hover effect
+    btn.onmouseover = () => (btn.style.opacity = "0.8");
+    btn.onmouseout = () => (btn.style.opacity = "1");
+
+    // Click handler
+
+    btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.innerText = "Exporting...";
+        await runExport();
+        btn.disabled = false;
+        btn.innerText = "Export";
+    });
+
+    return btn;
+}
+
+function insertExportButton() {
+    if (document.getElementById("chatgpt-export-btn")) return;
+
+    const header = document.querySelector('header');
+    if (!header) return;
+
+    const btn = createExportButton();
+    header.appendChild(btn);
+}
+
+insertExportButton();
+
+const observer = new MutationObserver(() => {
+    insertExportButton();
+});
+
+observer.observe(document.body, { childList: true, subtree: true});
