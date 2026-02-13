@@ -109,7 +109,8 @@ function runExport() {
         const role = article.getAttribute("data-turn");
         const messageNode = article.querySelector("[data-message-author-role]");
         const content = messageNode?.innerText?.trim() || "";
-
+        const files = extractFilesFromMessage(messageNode);
+        console.log(files);
         const attachments = [];
 
         //Extract images from message
@@ -185,4 +186,28 @@ function runExport() {
 
     // Export attachments as zip
     downloadAttachmentsToZip(allAttachments);
+}
+
+function extractFilesFromMessage(messageNode) {
+    const fileTiles = messageNode.querySelectorAll('div[class*="group/file-tile"]');
+    const files = [];
+    fileTiles.forEach(tile => {
+        const nameEl = tile.querySelector('div.truncate.font-semibold');
+        const typeEl = tile.querySelector('div.truncate.text-token-text-secondary');
+        const fileName = nameEl?.textContent.trim();
+        const fileType = typeEl?.textContent.trim();
+
+        const downloadButton = tile.querySelector('button[aria-label]');
+        const downloadUrl = downloadButton?.getAttribute('data-download-url') || null;
+
+        if (fileName) {
+            files.push({ 
+                type: fileType, 
+                url: downloadUrl,
+                filename: fileName
+            });
+        }
+
+    });
+    return files;
 }
