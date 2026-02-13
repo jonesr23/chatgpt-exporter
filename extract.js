@@ -95,40 +95,64 @@ async function downloadAttachmentsToZip(attachments) {
 function runExport() {
     console.log("Running Export");
 
-    const nodes = document.querySelectorAll('[data-message-author-role]');
-    const messages = [];
+    const conversation = [];
     const allAttachments = [];
+    const seen = new Set();
 
-    nodes.forEach((node) => {
-        const role = node.getAttribute("data-message-author-role");
-        const content = node.innerText.trim();
+    const articles = document.querySelectorAll(
+        '#thread article[data-testid^="conversation-turn-"]'
+    );
+
+    console.log(articles.length);
+
+    articles.forEach(article => {
+        const role = article.getAttribute("data-turn");
+        const messageNode = article.querySelector("[data-message-author-role]");
+        const content = messageNode?.innerText?.trim() || "";
 
         const attachments = [];
 
-        // Extract Images
-        node.querySelectorAll("img").forEach((img) => {
+        //Extract images from message
+
+        const imgs = article.querySelectorAll(
+            'img[src*="chatgpt.com/backend-api/estuary/content"]'
+        );
+
+        imgs.forEach(img => {
             const src = img.src;
-            if (!src) return;
+            if (!src || seen.has(src)) return;
 
-            if (src.includes("chatgpt.com/backend-api/estuary/content")) {
-                const filename = `img_${allAttachments.length}.png`;
-                const attachment = {
-                    type: "image",
-                    filename: filename,
-                    url: src
-                };
+            seen.add(src);
 
-                attachments.push(attachment);
-                allAttachments.push(attachment); // add to global list
-            }
-        });
+            const type = 
+                img.alt?.includes("Generated") ? "generated-image" :
+                img.alt?.includes("Uploaded") ? "uploaded-image" :
+                "image";
 
-        if (content || attachments.length) {
-            messages.push({ role, content, attachments });
-        }
+            const filename = `img_${allAttachments.length}.png`;
+            const attachment = {
+                type,
+                filename,
+                url: src
+            };
+
+            attachments.push(attachment);
+            allAttachments.push(attachment);
     });
 
-    if (!messages.length) {
+    if (content || attachments.length) {
+        conversation.push({
+            role,
+            content,
+            attachments
+        });
+    }
+});
+
+
+
+
+    if (!conversation.length) {
         console.warn("No messages found");
         return;
     }
@@ -139,7 +163,7 @@ function runExport() {
         source: "chatgpt.com",
         url: window.location.href,
         exported_at: new Date().toISOString(),
-        messages
+        conversation
     };
 
     const blob = new Blob(
