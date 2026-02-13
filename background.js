@@ -10,11 +10,11 @@ chrome.action.onClicked.addListener(async (tab) => {
         async () => {
             if (chrome.runtime.lastError) {
                 // Content script not injected yet - inject it
-                console.log("Injecting extract.js")
+                console.log("Injecting JSZIP + extract.js")
 
                 await chrome.scripting.executeScript({
                     target: { tabId: tab.id },
-                    files: ["extract.js"]
+                    files: ["jszip.min.js", "extract.js"]
                 });
             }
         }
