@@ -88,16 +88,21 @@ async function downloadAllConversationsAsZip(allConversations, allAttachments) {
 
 // --- Export a single conversation into memory ---
 async function runExportForConversation() {
+    await delay(5000);
     const conversation = [];
     const attachments = [];
     const seen = new Set();
 
     const articles = document.querySelectorAll('#thread article[data-testid^="conversation-turn-"]');
 
+    console.log(`${articles.length} messages found in this conversation`);
     articles.forEach(article => {
         const role = article.getAttribute("data-turn");
         const messageNode = article.querySelector("[data-message-author-role]");
         const content = messageNode?.innerText?.trim() || "";
+
+        console.log(`Role: ${role}, \nContent: ${content}`);
+
 
         const msgAttachments = [];
         const imgs = article.querySelectorAll('img[src*="file_"]');
@@ -118,6 +123,7 @@ async function runExportForConversation() {
         });
 
         if (content || msgAttachments.length) {
+            console.log(`Pushing message ${conversation.length + 1} to conversation`);
             conversation.push({ role, content, attachments: msgAttachments });
         }
     });
@@ -166,11 +172,14 @@ async function exportAllConversations() {
             allAttachments.push(...convData.attachments);
         }
         console.log(`Conversation ${convIndex} exported.`);
+        
     }
 
     // Download single ZIP for all conversations
     await downloadAllConversationsAsZip(allConversations, allAttachments);
 }
+
+const delay = ms => new Promise(res => setTimeout(res, ms));
 
 
 
