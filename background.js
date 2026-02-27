@@ -31,3 +31,20 @@ chrome.runtime.onMessage.addListener((msg) => {
         saveAs: true
     });
 });
+
+chrome.webRequest.onBeforeRequest.addListener(
+    async (details) => {
+        if (details.url.includes("/backend-api/estuary/content")) {
+            console.log("File download request detected:", details.url);
+
+            const donwloadUrl = details.url;
+            const filename = details.filename;
+
+            chrome.downloads.download({
+                url: donwloadUrl,
+                filename: filename
+            });
+        }
+    },
+    {urls: ["https://chatgpt.com/backend-api/estuary/*"]}
+);
