@@ -1,0 +1,8 @@
+Ollama setup for linux:
+
+1. Download Ollama from https://ollama.com/download
+  - From terminal Run:
+    curl -fsSL https://ollama.com/install.sh | sh
+2. Download model (for this project using llama3)
+  - In terminal run:
+    ollama pull llama3
