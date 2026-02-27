@@ -151,6 +151,9 @@ async function uploadConversation(sessionId, token, conversation) {
     });
 
     if (!res.ok) throw new Error("Conversation upload failed");
+    
+    const data = await res.json();
+    console.log(data.llmResponse);
 }
 
 async function uploadAttachments(sessionId, token, attachments) {
