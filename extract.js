@@ -1,17 +1,17 @@
-console.log ("extract.js loaded");
+console.log("extract.js loaded");
+const llmURL = "http://localhost:3000"
 
+// --- Wait for JSZip ---
 async function waitForJSZip() {
     return new Promise((resolve, reject) => {
-        const maxWait = 5000; // 5 second timeout
+        const maxWait = 5000; // 5 seconds
         const start = Date.now();
 
-        function check(){
+        function check() {
             if (window.JSZip) {
                 resolve();
-
-            } else if (Date.now - start > maxWait) {
+            } else if (Date.now() - start > maxWait) {
                 reject(new Error("JSZip not loaded"));
-
             } else {
                 setTimeout(check, 50);
             }
@@ -19,195 +19,304 @@ async function waitForJSZip() {
 
         check();
     });
-    
 }
 
+// --- Main initialization ---
 (async () => {
     try {
         await waitForJSZip();
+        console.log("JSZip loaded:", !!window.JSZip);
 
-        console.log("JSZip loaded: ", !!window.JSZip);
-
-        //Prevent double-registration if Chrome reinjects
         if (window.__CHATGPT_EXPORTER__) {
             console.log("Exporter already initialised");
-        } else {
-            window.__CHATGPT_EXPORTER__ = true;
-
-            chrome.runtime.onMessage.addListener((msg) => {
-                if (msg.type === "EXPORT") {
-                    runExport();
-                }
-            });
-
-            //Auto-run on first inject
-
-            runExport();
+            return;
         }
+
+        window.__CHATGPT_EXPORTER__ = true;
+
+        chrome.runtime.onMessage.addListener((msg) => {
+            if (msg.type === "EXPORT") {
+                exportAllConversations();
+            }
+        });
+
+        // Auto-run
+        exportAllConversations();
 
     } catch (err) {
         console.error("JSZip failed to load:", err);
     }
 })();
 
-
-
-
-
-async function downloadAttachmentsToZip(attachments) {
-    
+// --- Collect attachments into one ZIP at the end ---
+async function downloadAllConversationsAsZip(allConversations, allAttachments) {
     const zip = new JSZip();
 
-    for (const att of attachments) {
+    // Save each conversation JSON
+    allConversations.forEach((conv, idx) => {
+        zip.file(`conversation_${idx + 1}.json`, JSON.stringify(conv, null, 2));
+    });
+
+    // Save attachments into "files/" folder
+    for (const att of allAttachments) {
         try {
             const res = await fetch(att.url, { credentials: "include" });
-            if (!res.ok) throw new Error(`Failed to fetch ${att.url}`);
-
             const blob = await res.blob();
-            zip.file(att.filename, blob); //add to zip
-            console.log(`Added: ${att.filename}`);
-        
+            zip.file(`files/${att.filename}`, blob);
+            console.log(`Added attachment: ${att.filename}`);
         } catch (err) {
-            console.error(`Error downloading ${att.filename}:`, err);
+            console.error(`Failed to fetch attachment ${att.filename}:`, err);
         }
     }
 
-    // Prepare JSON references
-    const jsonref = attachments.map(att => ({
-        type: att.type,
-        filename: att.filename, 
-        path: `files/${att.filename}`
-    }));
+    // Optional index.json for reference
+    zip.file("index.json", JSON.stringify(allConversations.map((c, i) => ({
+        index: i + 1,
+        title: c.title,
+        url: c.url
+    })), null, 2));
 
-    zip.file("attachments.json", JSON.stringify(jsonref, null, 2));
-
-    // Generate zip as blob
-    const zipBlob = await zip.generateAsync({ type: "blob"});
-
-    //Donwload the zip
-
+    // Generate and download single ZIP
+    const zipBlob = await zip.generateAsync({ type: "blob" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(zipBlob);
-    a.download = "chatgpt_attachments.zip";
+    a.download = "chatgpt_export.zip";
     a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+
+    console.log("All conversations and attachments exported!");
 }
 
-function runExport() {
-    console.log("Running Export");
+async function transferToBridge(allConversations, allAttachments) {
+    console.log("Starting secure transfer...");
 
+    const normalised = normaliseConversations(allConversations);
+
+    const { sessionId, uploadToken} = await startBridgeSession();
+
+    for (const conv of normalised) {
+        await uploadConversation(sessionId, uploadToken, conv);
+    }
+
+    await uploadAttachments(sessionId, uploadToken, allAttachments);
+
+    console.log("Transfer complete.");
+
+    // Cleanup to ensure zero-retention
+    allConversations.length = 0;
+    allAttachments.length = 0;
+}
+
+function normaliseConversations(allConversations){
+    return allConversations.map(conv => ({
+        title: conv.title,
+        source: "chatgpt",
+        exported_at: conv.exported_at,
+        messages: conv.conversation.map(msg => ({
+            role: msg.role === "assistant" ? "assistant" : "user",
+            content: msg.content,
+            attachments: msg.attachments.map(a => ({
+                filename: a.filename,
+                type: a.type
+            })) || []
+        }))
+    }));
+}
+
+async function startBridgeSession() {
+    const res = await fetch(`${llmURL}/session/start` , {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        }
+    });
+
+    if (!res.ok) throw new Error("Session start failed");
+
+    return res.json();
+    // Expects { sessionId, uploadToken}
+}
+
+async function uploadConversation(sessionId, token, conversation) {
+    const res = await fetch(`${llmURL}/upload`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            sessionId,
+            conversation
+        })
+    });
+
+    if (!res.ok) throw new Error("Conversation upload failed");
+    
+    const data = await res.json();
+    console.log(data.llmResponse);
+}
+
+async function uploadAttachments(sessionId, token, attachments) {
+    for (const att of attachments) {
+        console.log("Uploading file: ", att.filename);
+        try{
+            const res = await fetch(att.url, { credentials: "include"});
+            const blob = await res.blob();
+
+            const formData = new FormData();
+            formData.append("sessionId", sessionId);
+            formData.append("file", blob, att.filename);
+
+            await fetch(`${llmURL}/upload/files`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                },
+                body: formData
+            });
+        } catch (err) {
+            console.error("Attachment upload failed:", err);
+        }
+    }
+}
+
+// --- Export a single conversation into memory ---
+async function runExportForConversation() {
+    await delay(5000);
     const conversation = [];
-    const allAttachments = [];
+    const attachments = [];
     const seen = new Set();
 
-    const articles = document.querySelectorAll(
-        '#thread article[data-testid^="conversation-turn-"]'
-    );
+    const articles = document.querySelectorAll('#thread article[data-testid^="conversation-turn-"]');
+    const buttonsToClick = [];
 
-    console.log(articles.length);
-
-    articles.forEach(article => {
+    console.log(`${articles.length} messages found in this conversation`);
+    articles.forEach(async article => {
         const role = article.getAttribute("data-turn");
         const messageNode = article.querySelector("[data-message-author-role]");
         const content = messageNode?.innerText?.trim() || "";
-        const files = extractFilesFromMessage(messageNode);
-        console.log(files);
-        const attachments = [];
 
-        //Extract images from message
+        console.log(`Role: ${role}, \nContent: ${content}`);
 
-        const imgs = article.querySelectorAll(
-            'img[src*="chatgpt.com/backend-api/estuary/content"]'
-        );
 
+        const msgAttachments = [];
+        const imgs = article.querySelectorAll('img[src*="file_"]');
+        const buttons = article.querySelectorAll('button[aria-label][class*="interactive-bg-secondary"]', 
+            'button[aria-label][class*="interactive-label-secondary"]',
+            'button[class*="behaviour-btn');
+        
         imgs.forEach(img => {
-            const src = img.src;
-            if (!src || seen.has(src)) return;
+            if (!img.src || seen.has(img.src)) return;
+            seen.add(img.src);
 
-            seen.add(src);
-
-            const type = 
+            const filename = `img_${attachments.length}.png`;
+            const type =
                 img.alt?.includes("Generated") ? "generated-image" :
                 img.alt?.includes("Uploaded") ? "uploaded-image" :
                 "image";
 
-            const filename = `img_${allAttachments.length}.png`;
-            const attachment = {
-                type,
-                filename,
-                url: src
-            };
-
+            const attachment = { type, filename, url: img.src };
+            msgAttachments.push(attachment);
             attachments.push(attachment);
-            allAttachments.push(attachment);
-    });
-
-    if (content || attachments.length) {
-        conversation.push({
-            role,
-            content,
-            attachments
         });
-    }
-});
 
+        buttons.forEach(button => {
+            buttonsToClick.push(button);
+        });
+        console.log(`FOUND ${buttonsToClick.length} buttons`)
+        for (const button of buttonsToClick){
+            console.log(`Click! ${button.getAttribute("aria-label")}`);
+            button.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
+            await waitForModalAndClose();
 
-
-
-    if (!conversation.length) {
-        console.warn("No messages found");
-        return;
-    }
-
-    
-    // Export JSON of conversation
-    const payload = {
-        source: "chatgpt.com",
-        url: window.location.href,
-        exported_at: new Date().toISOString(),
-        conversation
-    };
-
-    const blob = new Blob(
-        [JSON.stringify(payload, null, 2)],
-        { type: "application/json"}
-    );
-
-    const url = URL.createObjectURL(blob);
-
-    chrome.runtime.sendMessage({
-        type: "DOWNLOAD",
-        url,
-        filename: "chatgpt-export.json"
-    });
-
-    //Cleanup
-
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-
-    // Export attachments as zip
-    downloadAttachmentsToZip(allAttachments);
-}
-
-function extractFilesFromMessage(messageNode) {
-    const fileTiles = messageNode.querySelectorAll('div[class*="group/file-tile"]');
-    const files = [];
-    fileTiles.forEach(tile => {
-        const nameEl = tile.querySelector('div.truncate.font-semibold');
-        const typeEl = tile.querySelector('div.truncate.text-token-text-secondary');
-        const fileName = nameEl?.textContent.trim();
-        const fileType = typeEl?.textContent.trim();
-
-        const downloadButton = tile.querySelector('button[aria-label]');
-        const downloadUrl = downloadButton?.getAttribute('data-download-url') || null;
-
-        if (fileName) {
-            files.push({ 
-                type: fileType, 
-                url: downloadUrl,
-                filename: fileName
-            });
+            await delay(1000);
         }
 
+        if (content || msgAttachments.length) {
+            console.log(`Pushing message ${conversation.length + 1} to conversation`);
+            conversation.push({ role, content, attachments: msgAttachments });
+        }
     });
-    return files;
+
+    if (!conversation.length) return null;
+
+    return {
+        title: document.title || "Conversation",
+        url: window.location.href,
+        exported_at: new Date().toISOString(),
+        conversation,
+        attachments
+    };
 }
+
+function waitForModalAndClose() {
+    return new Promise((resolve) => {
+        const observer = new MutationObserver(() => {
+            const modal = document.querySelector('[role="dialog"]');
+            if (!modal) return;
+
+            const closeBtn =
+                modal.querySelector('button[aria-label="Close"]') ||
+                modal.querySelector('button');
+
+            if (closeBtn){
+                closeBtn.click();
+            } else {
+                modal.remove();
+            }
+
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+        });
+    });
+}
+
+// --- Open a conversation and wait for messages ---
+async function openConversationAndExport(link) {
+    return new Promise((resolve) => {
+        const observer = new MutationObserver(async (mutations, obs) => {
+            const messages = document.querySelectorAll('[data-message-author-role]');
+            if (messages.length > 0) {
+                obs.disconnect();
+                const convData = await runExportForConversation();
+                resolve(convData);
+            }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+        link.click();
+    });
+}
+
+// --- Main batch export ---
+async function exportAllConversations() {
+    const sidebarLinks = document.querySelectorAll('#history a[data-sidebar-item="true"]');
+    const allConversations = [];
+    const allAttachments = [];
+    let convIndex = 0;
+
+    for (const link of sidebarLinks) {
+        convIndex++;
+        console.log(`Opening conversation ${convIndex}: ${link.innerText}`);
+        const convData = await openConversationAndExport(link);
+        if (convData) {
+            allConversations.push(convData);
+            allAttachments.push(...convData.attachments);
+        }
+        console.log(`Conversation ${convIndex} exported.`);
+        
+    }
+
+    // Download single ZIP for all conversations
+    // await downloadAllConversationsAsZip(allConversations, allAttachments);
+    await transferToBridge(allConversations, allAttachments);
+
+
+}
+
+const delay = ms => new Promise(res => setTimeout(res, ms));
+
+
