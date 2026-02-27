@@ -3,11 +3,32 @@ import json
 import os
 import uuid
 import cgi
+import urllib.request
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "llama3"
 
 UPLOAD_ROOT = "uploads"
 
 if not os.path.exists(UPLOAD_ROOT):
     os.makedirs(UPLOAD_ROOT)
+
+def call_ollama(prompt):
+    payload = json.dumps({
+        "model": MODEL_NAME,
+        "prompt": prompt,
+        "stream": False
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+
+    with urllib.request.urlopen(req) as response:
+        return json.loads(response.read())
 
 
 class MockBridge(BaseHTTPRequestHandler):
@@ -60,11 +81,28 @@ class MockBridge(BaseHTTPRequestHandler):
 
             print(f"Saved conversation JSON to {file_path}")
 
+            prompt = f"""
+            Here is a conversation history in JSON format:
+
+            {json.dumps(data, indent=2)}
+
+            Based on this conversation, provide a concise summary and key insights.
+            """
+
+            # Call Ollama
+            ollama_response = call_ollama(prompt)
+
+            print(ollama_response.get("response"))
+
             self._set_json()
-            self.wfile.write(json.dumps({"status": "conversation saved"}).encode())
+            self.wfile.write(json.dumps({
+                "status": "conversation saved",
+                "llmResponse": ollama_response.get("response")
+            }).encode())
             return
 
-        if self.path == "/upload/file":
+
+        if self.path == "/upload/files":
             form = cgi.FieldStorage(
                 fp=self.rfile,
                 headers=self.headers,
