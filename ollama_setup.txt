@@ -7,6 +7,6 @@ Ollama setup for linux:
   - In terminal run:
   ollama serve
 
-3. Download model (for this project using llama3)
+3. Download model (for this project using qwen3-vl)
   - In terminal run:
-    ollama pull llama3
+    ollama pull qwen3-vl
