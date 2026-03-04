@@ -5,19 +5,34 @@ import uuid
 import cgi
 import urllib.request
 
+import base64
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3"
+MODEL_NAME = "qwen3-vl"
 
 UPLOAD_ROOT = "uploads"
+
 
 if not os.path.exists(UPLOAD_ROOT):
     os.makedirs(UPLOAD_ROOT)
 
-def call_ollama(prompt):
+def call_ollama(prompt, filenames, session_path, model_name=MODEL_NAME, ollama_url= OLLAMA_URL):
+    
+    images = []
+
+    for file in filenames:
+        file_path = os.path.join(session_path, file)
+        with open(file_path, "rb") as img:
+            s = base64.b64encode(img.read())
+            s = s.decode("ascii")
+            images.append(s)
+
+
     payload = json.dumps({
         "model": MODEL_NAME,
         "prompt": prompt,
-        "stream": False
+        "stream": False,
+        "images": images
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -74,7 +89,13 @@ class MockBridge(BaseHTTPRequestHandler):
             session_path = os.path.join(UPLOAD_ROOT, session_id)
             os.makedirs(session_path, exist_ok=True)
 
-            file_path = os.path.join(session_path, "conversation.json")
+            filenames = set()
+
+            for attachment in data['conversation'].get('attachments', []):
+                filenames.add(attachment['filename'])
+
+
+            file_path = os.path.join(session_path, f"conversation_{uuid.uuid4()}.json")
 
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -86,11 +107,11 @@ class MockBridge(BaseHTTPRequestHandler):
 
             {json.dumps(data, indent=2)}
 
-            Based on this conversation, provide a concise summary and key insights.
+            I would like to continue this conversation. Please give a short description of any images in the conversation, if there are none just say that there are none
             """
 
             # Call Ollama
-            ollama_response = call_ollama(prompt)
+            ollama_response = call_ollama(prompt, filenames, session_path)
 
             print(ollama_response.get("response"))
 
@@ -138,6 +159,7 @@ def run(port=3000):
     server_address = ('', port)
     httpd = HTTPServer(server_address, MockBridge)
     print(f"Mock bridge running on http://localhost:{port}")
+
     httpd.serve_forever()
 
 
