@@ -37,11 +37,11 @@ chrome.webRequest.onBeforeRequest.addListener(
         if (details.url.includes("/backend-api/estuary/content")) {
             console.log("File download request detected:", details.url);
 
-            const donwloadUrl = details.url;
+            const downloadUrl = details.url;
             const filename = details.filename;
 
             chrome.downloads.download({
-                url: donwloadUrl,
+                url: downloadUrl,
                 filename: filename
             });
         }
