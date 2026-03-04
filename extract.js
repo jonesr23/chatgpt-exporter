@@ -1,5 +1,4 @@
 console.log("extract.js loaded");
-const llmURL = "http://localhost:3000"
 
 // --- Wait for JSZip ---
 async function waitForJSZip() {
@@ -23,6 +22,8 @@ async function waitForJSZip() {
 
 // --- Main initialization ---
 (async () => {
+  
+
     try {
         await waitForJSZip();
         console.log("JSZip loaded:", !!window.JSZip);
@@ -90,15 +91,19 @@ async function downloadAllConversationsAsZip(allConversations, allAttachments) {
 async function transferToBridge(allConversations, allAttachments) {
     console.log("Starting secure transfer...");
 
+    const llmURL = "http://localhost:3000"
+
     const normalised = normaliseConversations(allConversations);
 
-    const { sessionId, uploadToken} = await startBridgeSession();
+    const { sessionId, uploadToken} = await startBridgeSession(llmURL);
+
+    await uploadAttachments(sessionId, uploadToken, allAttachments, llmURL);
 
     for (const conv of normalised) {
-        await uploadConversation(sessionId, uploadToken, conv);
+        await uploadConversation(sessionId, uploadToken, conv, llmURL);
     }
 
-    await uploadAttachments(sessionId, uploadToken, allAttachments);
+    
 
     console.log("Transfer complete.");
 
@@ -119,11 +124,12 @@ function normaliseConversations(allConversations){
                 filename: a.filename,
                 type: a.type
             })) || []
-        }))
+        })),
+        attachments: conv.attachments
     }));
 }
 
-async function startBridgeSession() {
+async function startBridgeSession(llmURL) {
     const res = await fetch(`${llmURL}/session/start` , {
         method: "POST",
         headers: {
@@ -137,7 +143,7 @@ async function startBridgeSession() {
     // Expects { sessionId, uploadToken}
 }
 
-async function uploadConversation(sessionId, token, conversation) {
+async function uploadConversation(sessionId, token, conversation, llmURL) {
     const res = await fetch(`${llmURL}/upload`, {
         method: "POST",
         headers: {
@@ -156,7 +162,7 @@ async function uploadConversation(sessionId, token, conversation) {
     console.log(data.llmResponse);
 }
 
-async function uploadAttachments(sessionId, token, attachments) {
+async function uploadAttachments(sessionId, token, attachments, llmURL) {
     for (const att of attachments) {
         console.log("Uploading file: ", att.filename);
         try{
@@ -182,30 +188,37 @@ async function uploadAttachments(sessionId, token, attachments) {
 
 // --- Export a single conversation into memory ---
 async function runExportForConversation() {
+
+    const delay = ms => new Promise(res => setTimeout(res, ms));
+
     await delay(5000);
     const conversation = [];
     const attachments = [];
     const seen = new Set();
 
     const articles = document.querySelectorAll('#thread article[data-testid^="conversation-turn-"]');
+    const buttonsToClick = [];
 
     console.log(`${articles.length} messages found in this conversation`);
-    articles.forEach(article => {
+    articles.forEach(async article => {
         const role = article.getAttribute("data-turn");
         const messageNode = article.querySelector("[data-message-author-role]");
         const content = messageNode?.innerText?.trim() || "";
 
-        console.log(`Role: ${role}, \nContent: ${content}`);
-
 
         const msgAttachments = [];
         const imgs = article.querySelectorAll('img[src*="file_"]');
-
+        const buttons = article.querySelectorAll('button[aria-label][class*="interactive-bg-secondary"]', 
+            'button[aria-label][class*="interactive-label-secondary"]',
+            'button[class*="behaviour-btn');
+        
         imgs.forEach(img => {
             if (!img.src || seen.has(img.src)) return;
             seen.add(img.src);
 
-            const filename = `img_${attachments.length}.png`;
+            const uuid = window.crypto.randomUUID();
+
+            const filename = uuid + `.png`;
             const type =
                 img.alt?.includes("Generated") ? "generated-image" :
                 img.alt?.includes("Uploaded") ? "uploaded-image" :
@@ -214,7 +227,20 @@ async function runExportForConversation() {
             const attachment = { type, filename, url: img.src };
             msgAttachments.push(attachment);
             attachments.push(attachment);
+            console.log(`Role: ${role}, \nContent: ${content}, \nAttachments: ${attachment.filename}`);
         });
+
+        buttons.forEach(button => {
+            buttonsToClick.push(button);
+        });
+        console.log(`FOUND ${buttonsToClick.length} buttons`)
+        for (const button of buttonsToClick){
+            console.log(`Click! ${button.getAttribute("aria-label")}`);
+            button.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
+            await waitForModalAndClose();
+
+            await delay(1000);
+        }
 
         if (content || msgAttachments.length) {
             console.log(`Pushing message ${conversation.length + 1} to conversation`);
@@ -231,6 +257,31 @@ async function runExportForConversation() {
         conversation,
         attachments
     };
+}
+
+function waitForModalAndClose() {
+    return new Promise((resolve) => {
+        const observer = new MutationObserver(() => {
+            const modal = document.querySelector('[role="dialog"]');
+            if (!modal) return;
+
+            const closeBtn =
+                modal.querySelector('button[aria-label="Close"]') ||
+                modal.querySelector('button');
+
+            if (closeBtn){
+                closeBtn.click();
+            } else {
+                modal.remove();
+            }
+
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+        });
+    });
 }
 
 // --- Open a conversation and wait for messages ---
@@ -276,6 +327,5 @@ async function exportAllConversations() {
 
 }
 
-const delay = ms => new Promise(res => setTimeout(res, ms));
 
 
