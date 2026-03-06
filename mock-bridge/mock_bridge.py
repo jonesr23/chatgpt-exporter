@@ -4,7 +4,7 @@ import os
 import uuid
 import cgi
 import urllib.request
-
+import mimetypes
 import base64
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -12,31 +12,56 @@ MODEL_NAME = "qwen3-vl"
 
 UPLOAD_ROOT = "uploads"
 
+FILENAME_DICT = {}  # Temp -> Stored
 
 if not os.path.exists(UPLOAD_ROOT):
     os.makedirs(UPLOAD_ROOT)
 
 def call_ollama(prompt, filenames, session_path, model_name=MODEL_NAME, ollama_url= OLLAMA_URL):
-    
     images = []
+    files = []
 
     for file in filenames:
-        file_path = os.path.join(session_path, file)
-        with open(file_path, "rb") as img:
-            s = base64.b64encode(img.read())
-            s = s.decode("ascii")
-            images.append(s)
+
+        file_path = os.path.join(session_path, FILENAME_DICT.get(file))
+
+        mime_type, _ = mimetypes.guess_type(file_path)
 
 
-    payload = json.dumps({
-        "model": MODEL_NAME,
+        with open(file_path, "rb") as f:
+            encoded = base64.b64encode(f.read()).decode("ascii")
+
+        if mime_type and mime_type.startswith("image/"):
+            images.append(encoded)
+        elif mime_type == "application/pdf":
+            files.append({
+                "name": os.path.basename(file_path),
+                "type": "application/pdf",
+                "data": encoded
+            })
+        else:
+            files.append({
+                "name": os.path.basename(file_path),
+                "type": mime_type or "application/octet-stream",
+                "data": encoded
+            })
+
+    payload_dict = {
+        "model": model_name,
         "prompt": prompt,
         "stream": False,
-        "images": images
-    }).encode("utf-8")
+    }
+
+    if images:
+        payload_dict["images"] = images
+    
+    if files:
+        payload_dict["files"] = files
+
+    payload = json.dumps(payload_dict).encode("utf-8")
 
     req = urllib.request.Request(
-        OLLAMA_URL,
+        ollama_url,
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST"
@@ -94,7 +119,6 @@ class MockBridge(BaseHTTPRequestHandler):
             for attachment in data['conversation'].get('attachments', []):
                 filenames.add(attachment['filename'])
 
-
             file_path = os.path.join(session_path, f"conversation_{uuid.uuid4()}.json")
 
             with open(file_path, "w", encoding="utf-8") as f:
@@ -107,7 +131,7 @@ class MockBridge(BaseHTTPRequestHandler):
 
             {json.dumps(data, indent=2)}
 
-            I would like to continue this conversation. Please give a short description of any images in the conversation, if there are none just say that there are none
+            I would like to continue this conversation. Describe the contents of any files I have attached
             """
 
             # Call Ollama
@@ -122,7 +146,6 @@ class MockBridge(BaseHTTPRequestHandler):
             }).encode())
             return
 
-
         if self.path == "/upload/files":
             form = cgi.FieldStorage(
                 fp=self.rfile,
@@ -135,11 +158,16 @@ class MockBridge(BaseHTTPRequestHandler):
 
             session_id = form.getvalue("sessionId")
             file_item = form["file"]
+            temp_filename = form.getvalue("tempFilename")
 
             if file_item.filename:
+
+                FILENAME_DICT[temp_filename] = file_item.filename
+
                 session_path = os.path.join(UPLOAD_ROOT, session_id)
                 os.makedirs(session_path, exist_ok=True)
 
+                # Save the file using the original filename
                 file_path = os.path.join(session_path, file_item.filename)
 
                 with open(file_path, "wb") as f:
@@ -159,7 +187,6 @@ def run(port=3000):
     server_address = ('', port)
     httpd = HTTPServer(server_address, MockBridge)
     print(f"Mock bridge running on http://localhost:{port}")
-
     httpd.serve_forever()
 
 
