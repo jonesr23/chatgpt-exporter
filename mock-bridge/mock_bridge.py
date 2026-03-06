@@ -131,7 +131,7 @@ class MockBridge(BaseHTTPRequestHandler):
 
             {json.dumps(data, indent=2)}
 
-            I would like to continue this conversation. Describe the contents of any files I have attached
+            I would like to continue this conversation. Describe the contents of any files that are attached
             """
 
             # Call Ollama
