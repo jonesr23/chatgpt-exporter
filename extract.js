@@ -181,19 +181,39 @@ async function uploadConversation(sessionId, token, conversation, llmURL) {
     //console.log(data.llmResponse);
 }
 
+
+
+
 async function uploadAttachments(sessionId, token, attachments, llmURL) {
-    
     // Loop through all attachments and upload individually
     for (const att of attachments) {
         console.log("Uploading file: ", att.filename);
-        try{
-            const res = await fetch(att.url, { credentials: "include"});
+        try {
+            const res = await fetch(att.url, { credentials: "include" });
+
+            // Extract filename from Content-Disposition or URL if not available
+            let filename = att.filename; // Default filename (fallback)
+            const contentDisposition = res.headers.get('Content-Disposition');
+            if (contentDisposition) {
+                const match = contentDisposition.match(/filename="([^"]+)"/);
+                if (match && match[1]) {
+                    filename = match[1];  // Extracted filename from the header
+                }
+            } else {
+                // Fallback to extracting from URL (if Content-Disposition is not present)
+                const urlParts = new URL(att.url).pathname.split('/');
+                filename = urlParts[urlParts.length - 1];
+            }
+
+            console.log(`Filename: ${filename} \n Temp Filename: ${att.filename}`);
+
             const blob = await res.blob();
 
             // Create form for file upload
             const formData = new FormData();
             formData.append("sessionId", sessionId);
-            formData.append("file", blob, att.filename);
+            formData.append("file", blob, filename);
+            formData.append("tempFilename", att.filename);
 
             // POST message to LLM server to upload a single attachment
             await fetch(`${llmURL}/upload/files`, {
@@ -223,11 +243,10 @@ async function runExportForConversation() {
 
     // Break down webpage html into articles (conversation messages)
     const articles = document.querySelectorAll('#thread article[data-testid^="conversation-turn-"]');
-    const buttonsToClick = [];
 
     console.log(`${articles.length} messages found in this conversation`);
     // For each message...
-    articles.forEach(async article => {
+    for (const article of articles) {
         // Who sent message (assistant || user )
         const role = article.getAttribute("data-turn");
         // Get contents of the message
@@ -248,10 +267,33 @@ async function runExportForConversation() {
         console.log(`${buttons.length} buttons in this message!`);
 
         // Add all buttons to a list to be clicked after conversation analysis
-        buttons.forEach(button => {
-            buttonsToClick.push(button);
-        });
-        
+        for (const button of buttons) {
+
+            const waitPromise = waitForAttachment();
+
+            button.click();
+
+            // Wait 5 seconds to catch url and return null if not caught in time
+            const url = await Promise.race([
+                waitPromise,
+                delay(5000).then(() => null)
+            ]);
+
+            console.log("5 seconds? " + url);
+
+            if (url) {
+                const uuid = window.crypto.randomUUID();
+
+                const filename = uuid;
+                const attachment = { type: "file", filename, url};
+                
+                msgAttachments.push(attachment);
+
+                attachments.push(attachment);
+                console.log(`${attachment.filename} stored`);
+            }
+        }
+
         imgs.forEach(img => {
             // Ensure images are not repeatedly uploaded
             if (!img.src || seen.has(img.src)) return;
@@ -280,38 +322,17 @@ async function runExportForConversation() {
             console.log(`Pushing message ${conversation.length + 1} to conversation`);
             conversation.push({ role, content, attachments: msgAttachments });
         }
-    });
-
-    console.log("Total Buttons:", buttonsToClick.length);
-    for (const button of buttonsToClick) {
-
-        const waitPromise = waitForAttachment();
-
-        button.click();
-
-        // Wait 5 seconds to catch url and return null if not caught in time
-        const url = Promise.race([
-            waitPromise,
-            delay(5000).then(() => null)
-        ]);
     }
-
-    const urls = window.__EXPORTED_ATTACHMENT_URLS__ || [];
-    console.log(urls.length);
-    for (const url of urls) {
-        const uuid = window.crypto.randomUUID();
-
-        const filename = uuid;
-        const attachment = fetchAndStoreFile(url, filename);
-        attachments.push(attachment);
-        console.log(`${filename} stored`);
-
-    }
-
-    window.__EXPORTED_ATTACHMENT_URLS__ = [];
 
 
     if (!conversation.length) return null;
+
+    console.log("Files in conversation ---------------");
+    for( const att of attachments){
+        console.log("File: " + att.filename);
+    }
+
+    console.log("END ---------------");
 
     return {
         title: document.title || "Conversation",
@@ -320,6 +341,7 @@ async function runExportForConversation() {
         conversation,
         attachments
     };
+    
 }
 
 function waitForAttachment() {
