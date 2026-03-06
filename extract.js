@@ -1,46 +1,25 @@
-console.log ("extract.js loaded");
+console.log("extract.js loaded");
 
-async function waitForJSZip() {
-    return new Promise((resolve, reject) => {
-        const maxWait = 5000; // 5 second timeout
-        const start = Date.now();
-
-        function check(){
-            if (window.JSZip) {
-                resolve();
-
-            } else if (Date.now - start > maxWait) {
-                reject(new Error("JSZip not loaded"));
-
-            } else {
-                setTimeout(check, 50);
-            }
-        }
-
-        check();
-    });
-    
-}
-
+// --- Main initialization ---
 (async () => {
+  
+
     try {
-        await waitForJSZip();
+        // await waitForJSZip();
+        // console.log("JSZip loaded:", !!window.JSZip);
 
-        console.log("JSZip loaded: ", !!window.JSZip);
-
-        //Prevent double-registration if Chrome reinjects
         if (window.__CHATGPT_EXPORTER__) {
             console.log("Exporter already initialised");
-        } else {
-            window.__CHATGPT_EXPORTER__ = true;
+            return;
+        }
 
-            chrome.runtime.onMessage.addListener((msg) => {
-                if (msg.type === "EXPORT") {
-                    runExport();
-                }
-            });
+        window.__CHATGPT_EXPORTER__ = true;
 
-            //Auto-run on first inject
+        chrome.runtime.onMessage.addListener((msg) => {
+            if (msg.type === "EXPORT") {
+                exportAllConversations();
+            }
+        });
 
             insertExportButton();
         }
@@ -50,141 +29,414 @@ async function waitForJSZip() {
     }
 })();
 
+// // --- Wait for JSZip ---
+// async function waitForJSZip() {
+//     return new Promise((resolve, reject) => {
+//         const maxWait = 5000; // 5 seconds
+//         const start = Date.now();
 
+//         function check() {
+//             if (window.JSZip) {
+//                 resolve();
+//             } else if (Date.now() - start > maxWait) {
+//                 reject(new Error("JSZip not loaded"));
+//             } else {
+//                 setTimeout(check, 50);
+//             }
+//         }
 
+//         check();
+//     });
+// }
 
+// // --- Collect attachments into one ZIP at the end ---
+// async function downloadAllConversationsAsZip(allConversations, allAttachments) {
+//     const zip = new JSZip();
 
-async function downloadAttachmentsToZip(attachments) {
-    
-    const zip = new JSZip();
+//     // Save each conversation JSON
+//     allConversations.forEach((conv, idx) => {
+//         zip.file(`conversation_${idx + 1}.json`, JSON.stringify(conv, null, 2));
+//     });
 
-    for (const att of attachments) {
-        try {
-            const res = await fetch(att.url, { credentials: "include" });
-            if (!res.ok) throw new Error(`Failed to fetch ${att.url}`);
+//     // Save attachments into "files/" folder
+//     for (const att of allAttachments) {
+//         try {
+//             const res = await fetch(att.url, { credentials: "include" });
+//             const blob = await res.blob();
+//             zip.file(`files/${att.filename}`, blob);
+//             console.log(`Added attachment: ${att.filename}`);
+//         } catch (err) {
+//             console.error(`Failed to fetch attachment ${att.filename}:`, err);
+//         }
+//     }
 
-            const blob = await res.blob();
-            zip.file(att.filename, blob); //add to zip
-            console.log(`Added: ${att.filename}`);
-        
-        } catch (err) {
-            console.error(`Error downloading ${att.filename}:`, err);
-        }
+//     // Optional index.json for reference
+//     zip.file("index.json", JSON.stringify(allConversations.map((c, i) => ({
+//         index: i + 1,
+//         title: c.title,
+//         url: c.url
+//     })), null, 2));
+
+//     // Generate and download single ZIP
+//     const zipBlob = await zip.generateAsync({ type: "blob" });
+//     const a = document.createElement("a");
+//     a.href = URL.createObjectURL(zipBlob);
+//     a.download = "chatgpt_export.zip";
+//     a.click();
+//     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+
+//     console.log("All conversations and attachments exported!");
+// }
+
+async function transferToBridge(allConversations, allAttachments) {
+    console.log("Starting secure transfer...");
+
+    const llmURL = "http://localhost:3000"
+
+    // Normalise conversations for transfer, to enable readability for LLM upload
+    const normalised = normaliseConversations(allConversations);
+
+    // Opens session with LLM server
+    const { sessionId, uploadToken} = await startBridgeSession(llmURL);
+
+    // Upload all attachments to LLM server
+    await uploadAttachments(sessionId, uploadToken, allAttachments, llmURL);
+
+    // Upload all conversations individually to LLM server
+    for (const conv of normalised) {
+        await uploadConversation(sessionId, uploadToken, conv, llmURL);
     }
 
-    // Prepare JSON references
-    const jsonref = attachments.map(att => ({
-        type: att.type,
-        filename: att.filename, 
-        path: `files/${att.filename}`
-    }));
+    
 
-    zip.file("attachments.json", JSON.stringify(jsonref, null, 2));
+    console.log("Transfer complete.");
 
-    // Generate zip as blob
-    const zipBlob = await zip.generateAsync({ type: "blob"});
-
-    //Donwload the zip
-
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(zipBlob);
-    a.download = "chatgpt_attachments.zip";
-    a.click();
+    // Cleanup to ensure zero-retention
+    allConversations.length = 0;
+    allAttachments.length = 0;
 }
 
-function runExport() {
-    console.log("Running Export");
+function normaliseConversations(allConversations){
 
+    // Format conversations to be readable at LLM-side of bridge
+    return allConversations.map(conv => ({
+        title: conv.title,
+        source: "chatgpt",
+        exported_at: conv.exported_at,
+        messages: conv.conversation.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+            attachments: msg.attachments.map(a => ({
+                filename: a.filename,
+                type: a.type
+            })) || []
+        })),
+        attachments: conv.attachments
+    }));
+}
+
+async function startBridgeSession(llmURL) {
+    // POST message to LLM server to start upload session
+    const res = await fetch(`${llmURL}/session/start` , {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        }
+    });
+
+    if (!res.ok) throw new Error("Session start failed");
+
+    return res.json();
+    // Expects { sessionId, uploadToken}
+}
+
+async function uploadConversation(sessionId, token, conversation, llmURL) {
+    // POST message to LLM server to upload a single conversation
+    const res = await fetch(`${llmURL}/upload`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            sessionId,
+            conversation
+        })
+    });
+
+    if (!res.ok) throw new Error("Conversation upload failed");
+    
+    const data = await res.json();
+    // Will output a response from the LLM based on prompt given at server-side and uploaded conversation
+    //console.log(data.llmResponse);
+}
+
+
+
+
+async function uploadAttachments(sessionId, token, attachments, llmURL) {
+    // Loop through all attachments and upload individually
+    for (const att of attachments) {
+        console.log("Uploading file: ", att.filename);
+        try {
+            const res = await fetch(att.url, { credentials: "include" });
+
+            // Extract filename from Content-Disposition or URL if not available
+            let filename = att.filename; // Default filename (fallback)
+            const contentDisposition = res.headers.get('Content-Disposition');
+            if (contentDisposition) {
+                const match = contentDisposition.match(/filename="([^"]+)"/);
+                if (match && match[1]) {
+                    filename = match[1];  // Extracted filename from the header
+                }
+            } else {
+                // Fallback to extracting from URL (if Content-Disposition is not present)
+                const urlParts = new URL(att.url).pathname.split('/');
+                filename = urlParts[urlParts.length - 1];
+            }
+
+            console.log(`Filename: ${filename} \n Temp Filename: ${att.filename}`);
+
+            const blob = await res.blob();
+
+            // Create form for file upload
+            const formData = new FormData();
+            formData.append("sessionId", sessionId);
+            formData.append("file", blob, filename);
+            formData.append("tempFilename", att.filename);
+
+            // POST message to LLM server to upload a single attachment
+            await fetch(`${llmURL}/upload/files`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                },
+                body: formData
+            });
+        } catch (err) {
+            console.error("Attachment upload failed:", err);
+        }
+    }
+}
+
+// --- Export a single conversation into memory ---
+async function runExportForConversation() {
+
+    // Delay function
+    const delay = ms => new Promise(res => setTimeout(res, ms));
+
+    // Delay to ensure page is loaded
+    await delay(5000);
     const conversation = [];
-    const allAttachments = [];
+    const attachments = [];
     const seen = new Set();
 
-    const articles = document.querySelectorAll(
-        '#thread article[data-testid^="conversation-turn-"]'
-    );
+    // Break down webpage html into articles (conversation messages)
+    const articles = document.querySelectorAll('#thread article[data-testid^="conversation-turn-"]');
 
-    console.log(articles.length);
-
-    articles.forEach(article => {
+    console.log(`${articles.length} messages found in this conversation`);
+    // For each message...
+    for (const article of articles) {
+        // Who sent message (assistant || user )
         const role = article.getAttribute("data-turn");
+        // Get contents of the message
         const messageNode = article.querySelector("[data-message-author-role]");
         const content = messageNode?.innerText?.trim() || "";
 
-        const attachments = [];
+        // Look for attachments to message
+        const msgAttachments = [];
+        // Image File query
+        const imgs = article.querySelectorAll('img[src*="file_"]');
+        // Other File Types are accessed through buttons running network fetches
+        const buttons = article.querySelectorAll(`
+            button[class*="behavior-btn"],
+            button[class*="interactive-bg-secondary"],
+            button[class*="interactive-label-secondary"]
+        `);
 
-        //Extract images from message
+        console.log(`${buttons.length} buttons in this message!`);
 
-        const imgs = article.querySelectorAll(
-            'img[src*="chatgpt.com/backend-api/estuary/content"]'
-        );
+        // Add all buttons to a list to be clicked after conversation analysis
+        for (const button of buttons) {
+
+            const waitPromise = waitForAttachment();
+
+            button.click();
+
+            // Wait 5 seconds to catch url and return null if not caught in time
+            const url = await Promise.race([
+                waitPromise,
+                delay(5000).then(() => null)
+            ]);
+
+            console.log("5 seconds? " + url);
+
+            if (url) {
+                const uuid = window.crypto.randomUUID();
+
+                const filename = uuid;
+                const attachment = { type: "file", filename, url};
+                
+                msgAttachments.push(attachment);
+
+                attachments.push(attachment);
+                console.log(`${attachment.filename} stored`);
+            }
+        }
 
         imgs.forEach(img => {
-            const src = img.src;
-            if (!src || seen.has(src)) return;
+            // Ensure images are not repeatedly uploaded
+            if (!img.src || seen.has(img.src)) return;
+            seen.add(img.src);
+            // Generate ID for file
+            const uuid = window.crypto.randomUUID();
 
-            seen.add(src);
-
-            const type = 
+            const filename = uuid;
+            // Get whether files were generated by LLM or uploaded or generic
+            const type =
                 img.alt?.includes("Generated") ? "generated-image" :
                 img.alt?.includes("Uploaded") ? "uploaded-image" :
                 "image";
 
-            const filename = `img_${allAttachments.length}.png`;
-            const attachment = {
-                type,
-                filename,
-                url: src
-            };
-
+            const attachment = { type, filename, url: img.src };
+            // Add attachment to message
+            msgAttachments.push(attachment);
+            // Add attachment to conversation
             attachments.push(attachment);
-            allAttachments.push(attachment);
-    });
-
-    if (content || attachments.length) {
-        conversation.push({
-            role,
-            content,
-            attachments
+            console.log(`Role: ${role}, \nContent: ${content}, \nAttachments: ${attachment.filename}`);
         });
-    }
-});
 
+        // GOT TO HERE
 
-
-
-    if (!conversation.length) {
-        console.warn("No messages found");
-        return;
+        if (content || msgAttachments.length) {
+            console.log(`Pushing message ${conversation.length + 1} to conversation`);
+            conversation.push({ role, content, attachments: msgAttachments });
+        }
     }
 
-    
-    // Export JSON of conversation
-    const payload = {
-        source: "chatgpt.com",
+
+    if (!conversation.length) return null;
+
+    console.log("Files in conversation ---------------");
+    for( const att of attachments){
+        console.log("File: " + att.filename);
+    }
+
+    console.log("END ---------------");
+
+    return {
+        title: document.title || "Conversation",
         url: window.location.href,
         exported_at: new Date().toISOString(),
-        conversation
+        conversation,
+        attachments
     };
+    
+}
 
-    const blob = new Blob(
-        [JSON.stringify(payload, null, 2)],
-        { type: "application/json"}
-    );
-
-    const url = URL.createObjectURL(blob);
-
-    chrome.runtime.sendMessage({
-        type: "DOWNLOAD",
-        url,
-        filename: "chatgpt-export.json"
+function waitForAttachment() {
+    return new Promise(resolve => {
+        function listener(msg) {
+            if (msg.type === "ATTACHMENT_URL") {
+                chrome.runtime.onMessage.removeListener(listener);
+                resolve(msg.url);
+            }
+        }
+        chrome.runtime.onMessage.addListener(listener);
     });
+}
 
-    //Cleanup
+async function fetchAndStoreFile(url, filename) {
+    try {
+        const res = await fetch(url, {
+            credentials: "include"
+        });
 
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+        if (!res.ok) {
+            throw new Error(`Fetch failed: ${res.status}`);
+        }
 
-    // Export attachments as zip
-    downloadAttachmentsToZip(allAttachments);
+        const blob = await res.blob();
+
+        return {
+            filename,
+            blob,
+            size: blob.size,
+            type: blob.type
+        };
+
+    } catch (err) {
+        console.error("File fetch failed:", err);
+        return null;
+    }
+}
+
+// function waitForModalAndClose() {
+//     return new Promise((resolve) => {
+//         const observer = new MutationObserver(() => {
+//             const modal = document.querySelector('[role="dialog"]');
+//             if (!modal) return;
+
+//             const closeBtn =
+//                 modal.querySelector('button[aria-label="Close"]') ||
+//                 modal.querySelector('button');
+
+//             if (closeBtn){
+//                 closeBtn.click();
+//             } else {
+//                 modal.remove();
+//             }
+
+//         });
+
+//         observer.observe(document.body, {
+//             childList: true,
+//             subtree: true,
+//         });
+//     });
+// }
+
+// --- Open a conversation and wait for messages ---
+async function openConversationAndExport(link) {
+    return new Promise((resolve) => {
+        const observer = new MutationObserver(async (mutations, obs) => {
+            const messages = document.querySelectorAll('[data-message-author-role]');
+            if (messages.length > 0) {
+                obs.disconnect();
+                const convData = await runExportForConversation();
+                resolve(convData);
+            }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+        link.click();
+    });
+}
+
+// --- Main batch export ---
+async function exportAllConversations() {
+    const sidebarLinks = document.querySelectorAll('#history a[data-sidebar-item="true"]');
+    const allConversations = [];
+    const allAttachments = [];
+    let convIndex = 0;
+
+    for (const link of sidebarLinks) {
+        convIndex++;
+        console.log(`Opening conversation ${convIndex}: ${link.innerText}`);
+        const convData = await openConversationAndExport(link);
+        if (convData) {
+            allConversations.push(convData);
+            allAttachments.push(...convData.attachments);
+        }
+        console.log(`Conversation ${convIndex} exported.`);
+        
+    }
+
+    // Download single ZIP for all conversations
+    // await downloadAllConversationsAsZip(allConversations, allAttachments);
+    await transferToBridge(allConversations, allAttachments);
+
+
 }
 
 function createExportButton(){
