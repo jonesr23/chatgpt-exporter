@@ -21,72 +21,146 @@ console.log("extract.js loaded");
             }
         });
 
-            insertExportButton();
-        }
+        chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+            if (msg.type === "ATTACHMENT_URL") {
+                console.log("Received attachment URL from background:", msg.url);
+
+                // Store it
+                window.__EXPORTED_ATTACHMENT_URLS__ ??= [];
+                window.__EXPORTED_ATTACHMENT_URLS__.push(msg.url);
+            }
+        });
+
+        // Auto-run
+        insertExportButton();
 
     } catch (err) {
         console.error("JSZip failed to load:", err);
     }
 })();
 
-// // --- Wait for JSZip ---
-// async function waitForJSZip() {
-//     return new Promise((resolve, reject) => {
-//         const maxWait = 5000; // 5 seconds
-//         const start = Date.now();
+// --- Create Export Button with Dropdown ---
+function createExportButton() {
+    const btn = document.createElement("button");
+    btn.id = "chatgpt-export-btn";
+    btn.innerText = "Export";
+    btn.style.marginLeft = "8px";
+    btn.style.padding = "6px 12px";
+    btn.style.backgroundColor = "#10a37f";
+    btn.style.color = "white";
+    btn.style.border = "none";
+    btn.style.borderRadius = "4px";
+    btn.style.cursor = "pointer";
+    btn.style.fontSize = "14px";
 
-//         function check() {
-//             if (window.JSZip) {
-//                 resolve();
-//             } else if (Date.now() - start > maxWait) {
-//                 reject(new Error("JSZip not loaded"));
-//             } else {
-//                 setTimeout(check, 50);
-//             }
-//         }
+    // Hover effect
+    btn.onmouseover = () => (btn.style.opacity = "0.8");
+    btn.onmouseout = () => (btn.style.opacity = "1");
 
-//         check();
-//     });
-// }
+    // Click handler to show dropdown
+    btn.addEventListener("click", async () => {
+        showExportDropdown(btn);
+    });
 
-// // --- Collect attachments into one ZIP at the end ---
-// async function downloadAllConversationsAsZip(allConversations, allAttachments) {
-//     const zip = new JSZip();
+    return btn;
+}
 
-//     // Save each conversation JSON
-//     allConversations.forEach((conv, idx) => {
-//         zip.file(`conversation_${idx + 1}.json`, JSON.stringify(conv, null, 2));
-//     });
+// --- Show the Dropdown to Choose Export Option ---
+function showExportDropdown(btn) {
+    // Check if dropdown already exists and remove it if so
+    let existingDropdown = document.getElementById('chatgpt-export-dropdown');
+    if (existingDropdown) {
+        existingDropdown.remove();
+    }
 
-//     // Save attachments into "files/" folder
-//     for (const att of allAttachments) {
-//         try {
-//             const res = await fetch(att.url, { credentials: "include" });
-//             const blob = await res.blob();
-//             zip.file(`files/${att.filename}`, blob);
-//             console.log(`Added attachment: ${att.filename}`);
-//         } catch (err) {
-//             console.error(`Failed to fetch attachment ${att.filename}:`, err);
-//         }
-//     }
+    // Create a new dropdown container
+    const dropdown = document.createElement('div');
+    dropdown.id = 'chatgpt-export-dropdown';
+    dropdown.style.position = 'absolute';
+    dropdown.style.top = `${btn.offsetTop + btn.offsetHeight + 5}px`;
+    dropdown.style.left = `${btn.offsetLeft}px`;
+    dropdown.style.backgroundColor = '#fff';
+    dropdown.style.border = '1px solid #ddd';
+    dropdown.style.borderRadius = '4px';
+    dropdown.style.boxShadow = '0px 2px 5px rgba(0,0,0,0.15)';
+    dropdown.style.zIndex = '9999';
+    dropdown.style.width = '160px';
 
-//     // Optional index.json for reference
-//     zip.file("index.json", JSON.stringify(allConversations.map((c, i) => ({
-//         index: i + 1,
-//         title: c.title,
-//         url: c.url
-//     })), null, 2));
+    // Add the options to the dropdown
+    const exportCurrentOption = document.createElement('div');
+    exportCurrentOption.innerText = 'Export Current Conversation';
+    exportCurrentOption.style.padding = '8px';
+    exportCurrentOption.style.cursor = 'pointer';
+    exportCurrentOption.style.fontSize = '14px';
 
-//     // Generate and download single ZIP
-//     const zipBlob = await zip.generateAsync({ type: "blob" });
-//     const a = document.createElement("a");
-//     a.href = URL.createObjectURL(zipBlob);
-//     a.download = "chatgpt_export.zip";
-//     a.click();
-//     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const exportAllOption = document.createElement('div');
+    exportAllOption.innerText = 'Export All Conversations';
+    exportAllOption.style.padding = '8px';
+    exportAllOption.style.cursor = 'pointer';
+    exportAllOption.style.fontSize = '14px';
 
-//     console.log("All conversations and attachments exported!");
-// }
+    // Hover effects for options
+    exportCurrentOption.onmouseover = () => (exportCurrentOption.style.backgroundColor = '#f1f1f1');
+    exportCurrentOption.onmouseout = () => (exportCurrentOption.style.backgroundColor = '');
+    
+    exportAllOption.onmouseover = () => (exportAllOption.style.backgroundColor = '#f1f1f1');
+    exportAllOption.onmouseout = () => (exportAllOption.style.backgroundColor = '');
+
+    // Event listeners for options
+    exportCurrentOption.addEventListener('click', async () => {
+        await exportCurrentConversation();
+        dropdown.remove(); // Close dropdown after selection
+    });
+
+    exportAllOption.addEventListener('click', async () => {
+        await exportAllConversations();
+        dropdown.remove(); // Close dropdown after selection
+    });
+
+    // Append options to dropdown
+    dropdown.appendChild(exportCurrentOption);
+    dropdown.appendChild(exportAllOption);
+
+    // Append dropdown to the body
+    document.body.appendChild(dropdown);
+
+    // Close dropdown if clicked outside
+    document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target) && e.target !== btn) {
+            dropdown.remove();
+        }
+    });
+}
+
+
+function insertExportButton() {
+    // Check if the export button already exists
+    if (document.getElementById("chatgpt-export-btn")) return;
+
+    // Ensure the header exists
+    const header = document.querySelector('header');
+    if (!header) {
+        console.error("Header element not found. Retry after DOM is fully loaded.");
+        return;
+    }
+
+    // Create the export button
+    const btn = createExportButton();
+
+    // Append the button to the header
+    header.appendChild(btn);
+}
+
+// Ensure the DOM is fully loaded before inserting the button
+document.addEventListener('DOMContentLoaded', () => {
+    insertExportButton();
+});
+
+const observer = new MutationObserver(() => {
+    insertExportButton();
+});
+
+observer.observe(document.body, { childList: true, subtree: true});
 
 async function transferToBridge(allConversations, allAttachments) {
     console.log("Starting secure transfer...");
@@ -413,8 +487,24 @@ async function openConversationAndExport(link) {
     });
 }
 
+// Export Current Conversation
+async function exportCurrentConversation() {
+    console.log("Exporting current conversation...");
+    const convData = await runExportForConversation();
+    if (convData) {
+        // Do the export or processing for just the current conversation
+        console.log("Current Conversation Exported:", convData);
+        // You can now transfer this data to your server or download as required
+        await transferToBridge([convData], convData.attachments);
+    } else {
+        console.log("No conversation data found to export.");
+    }
+}
+
+
 // --- Main batch export ---
 async function exportAllConversations() {
+    console.log("Exporting all conversations...");
     const sidebarLinks = document.querySelectorAll('#history a[data-sidebar-item="true"]');
     const allConversations = [];
     const allAttachments = [];
@@ -439,50 +529,5 @@ async function exportAllConversations() {
 
 }
 
-function createExportButton(){
-    const btn = document.createElement("button");
-    btn.id = "chatgpt-export-btn";
-    btn.innerText = "Export";
-    btn.style.marginLeft = "8px";
-    btn.style.padding = "6px 12px";
-    btn.style.backgroundColor = "#10a37f";
-    btn.style.color = "white";
-    btn.style.border = "none";
-    btn.style.borderRadius = "4px";
-    btn.style.cursor = "pointer";
-    btn.style.fontSize = "14px";
 
-    // Hover effect
-    btn.onmouseover = () => (btn.style.opacity = "0.8");
-    btn.onmouseout = () => (btn.style.opacity = "1");
 
-    // Click handler
-
-    btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        btn.innerText = "Exporting...";
-        await runExport();
-        btn.disabled = false;
-        btn.innerText = "Export";
-    });
-
-    return btn;
-}
-
-function insertExportButton() {
-    if (document.getElementById("chatgpt-export-btn")) return;
-
-    const header = document.querySelector('header');
-    if (!header) return;
-
-    const btn = createExportButton();
-    header.appendChild(btn);
-}
-
-insertExportButton();
-
-const observer = new MutationObserver(() => {
-    insertExportButton();
-});
-
-observer.observe(document.body, { childList: true, subtree: true});
