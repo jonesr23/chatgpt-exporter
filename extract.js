@@ -39,116 +39,63 @@ console.log("extract.js loaded");
     }
 })();
 
-// --- Create Export Button with Dropdown ---
-function createExportButton() {
-    const btn = document.createElement("button");
-    btn.id = "chatgpt-export-btn";
-    btn.innerText = "Export";
-    btn.style.marginLeft = "8px";
-    btn.style.padding = "6px 12px";
-    btn.style.backgroundColor = "#10a37f";
-    btn.style.color = "white";
-    btn.style.border = "none";
-    btn.style.borderRadius = "4px";
-    btn.style.cursor = "pointer";
-    btn.style.fontSize = "14px";
+async function promptServerURL() {
+    const current = await getServerURL();
 
-    // Hover effect
-    btn.onmouseover = () => (btn.style.opacity = "0.8");
-    btn.onmouseout = () => (btn.style.opacity = "1");
+    const url = prompt("Enter LLM server URL:", current);
 
-    // Click handler to show dropdown
-    btn.addEventListener("click", async () => {
-        showExportDropdown(btn);
-    });
+    if (!url) return;
 
-    return btn;
-}
-
-// --- Show the Dropdown to Choose Export Option ---
-function showExportDropdown(btn) {
-    // Check if dropdown already exists and remove it if so
-    let existingDropdown = document.getElementById('chatgpt-export-dropdown');
-    if (existingDropdown) {
-        existingDropdown.remove();
+    try {
+        new URL(url); // validate
+        await setServerURL(url);
+        alert("Server URL saved.");
+    } catch {
+        alert("Invalid URL.");
     }
-
-    // Create a new dropdown container
-    const dropdown = document.createElement('div');
-    dropdown.id = 'chatgpt-export-dropdown';
-    dropdown.style.position = 'absolute';
-    dropdown.style.top = `${btn.offsetTop + btn.offsetHeight + 5}px`;
-    dropdown.style.left = `${btn.offsetLeft}px`;
-    dropdown.style.backgroundColor = '#fff';
-    dropdown.style.border = '1px solid #ddd';
-    dropdown.style.borderRadius = '4px';
-    dropdown.style.boxShadow = '0px 2px 5px rgba(0,0,0,0.15)';
-    dropdown.style.zIndex = '9999';
-    dropdown.style.width = '160px';
-
-    // Add the options to the dropdown
-    const exportCurrentOption = document.createElement('div');
-    exportCurrentOption.innerText = 'Export Current Conversation';
-    exportCurrentOption.style.padding = '8px';
-    exportCurrentOption.style.cursor = 'pointer';
-    exportCurrentOption.style.fontSize = '14px';
-
-    const exportAllOption = document.createElement('div');
-    exportAllOption.innerText = 'Export All Conversations';
-    exportAllOption.style.padding = '8px';
-    exportAllOption.style.cursor = 'pointer';
-    exportAllOption.style.fontSize = '14px';
-
-    // Hover effects for options
-    exportCurrentOption.onmouseover = () => (exportCurrentOption.style.backgroundColor = '#f1f1f1');
-    exportCurrentOption.onmouseout = () => (exportCurrentOption.style.backgroundColor = '');
-    
-    exportAllOption.onmouseover = () => (exportAllOption.style.backgroundColor = '#f1f1f1');
-    exportAllOption.onmouseout = () => (exportAllOption.style.backgroundColor = '');
-
-    // Event listeners for options
-    exportCurrentOption.addEventListener('click', async () => {
-        await exportCurrentConversation();
-        dropdown.remove(); // Close dropdown after selection
-    });
-
-    exportAllOption.addEventListener('click', async () => {
-        await exportAllConversations();
-        dropdown.remove(); // Close dropdown after selection
-    });
-
-    // Append options to dropdown
-    dropdown.appendChild(exportCurrentOption);
-    dropdown.appendChild(exportAllOption);
-
-    // Append dropdown to the body
-    document.body.appendChild(dropdown);
-
-    // Close dropdown if clicked outside
-    document.addEventListener('click', (e) => {
-        if (!dropdown.contains(e.target) && e.target !== btn) {
-            dropdown.remove();
-        }
-    });
 }
 
 
 function insertExportButton() {
-    // Check if the export button already exists
-    if (document.getElementById("chatgpt-export-btn")) return;
+    if (document.getElementById("chatgpt-export-container")) return;
 
-    // Ensure the header exists
-    const header = document.querySelector('header');
-    if (!header) {
-        console.error("Header element not found. Retry after DOM is fully loaded.");
-        return;
-    }
+    const container = document.createElement("div");
+    container.id = "chatgpt-export-container";
 
-    // Create the export button
-    const btn = createExportButton();
+    container.style.position = "fixed";
+    container.style.bottom = "24px";
+    container.style.right = "24px";
+    container.style.zIndex = "9999";
+    container.style.fontFamily = "system-ui, sans-serif";
 
-    // Append the button to the header
-    header.appendChild(btn);
+    const button = document.createElement("button");
+    button.id = "chatgpt-export-btn";
+    button.innerText = "Export";
+
+    button.style.background = "#10a37f";
+    button.style.color = "white";
+    button.style.border = "none";
+    button.style.borderRadius = "999px";
+    button.style.padding = "12px 18px";
+    button.style.fontSize = "14px";
+    button.style.cursor = "pointer";
+    button.style.boxShadow = "0 4px 14px rgba(0,0,0,0.25)";
+    button.style.transition = "all 0.2s ease";
+
+    button.onmouseenter = () => {
+        button.style.transform = "translateY(-2px)";
+        button.style.boxShadow = "0 6px 18px rgba(0,0,0,0.3)";
+    };
+
+    button.onmouseleave = () => {
+        button.style.transform = "translateY(0)";
+        button.style.boxShadow = "0 4px 14px rgba(0,0,0,0.25)";
+    };
+
+    button.onclick = () => toggleDropdown(container);
+
+    container.appendChild(button);
+    document.body.appendChild(container);
 }
 
 // Ensure the DOM is fully loaded before inserting the button
@@ -160,12 +107,87 @@ const observer = new MutationObserver(() => {
     insertExportButton();
 });
 
+function toggleDropdown(container) {
+    const existing = document.getElementById("chatgpt-export-dropdown");
+
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    const dropdown = document.createElement("div");
+    dropdown.id = "chatgpt-export-dropdown";
+
+    dropdown.style.position = "absolute";
+    dropdown.style.bottom = "60px";
+    dropdown.style.right = "0";
+    dropdown.style.width = "220px";
+    dropdown.style.background = "#ffffff";
+    dropdown.style.border = "1px solid #e5e5e5";
+    dropdown.style.borderRadius = "10px";
+    dropdown.style.boxShadow = "0 10px 30px rgba(0,0,0,0.2)";
+    dropdown.style.overflow = "hidden";
+    dropdown.style.animation = "fadeInUp 0.15s ease";
+
+    dropdown.appendChild(createOption(
+        "Export Current Conversation",
+        exportCurrentConversation
+    ));
+
+    dropdown.appendChild(createOption(
+        "Export All Conversations",
+        exportAllConversations
+    ));
+
+    dropdown.appendChild(createOption(
+        "Set Server URL",
+        promptServerURL
+    ));
+
+    container.appendChild(dropdown);
+
+    document.addEventListener("click", function close(e) {
+        if (!container.contains(e.target)) {
+            dropdown.remove();
+            document.removeEventListener("click", close);
+        }
+    });
+}
+
+function createOption(label, handler) {
+    const option = document.createElement("div");
+
+    option.innerText = label;
+
+    option.style.padding = "12px 16px";
+    option.style.cursor = "pointer";
+    option.style.fontSize = "14px";
+    option.style.transition = "background 0.15s";
+
+    option.onmouseenter = () => {
+        option.style.background = "#f5f5f5";
+    };
+
+    option.onmouseleave = () => {
+        option.style.background = "transparent";
+    };
+
+    option.onclick = async () => {
+        document.getElementById("chatgpt-export-dropdown")?.remove();
+        await handler();
+    };
+
+    return option;
+}
+
+insertExportButton();
+
 observer.observe(document.body, { childList: true, subtree: true});
 
 async function transferToBridge(allConversations, allAttachments) {
     console.log("Starting secure transfer...");
 
-    const llmURL = "http://localhost:3000"
+    const llmURL = await getServerURL();
 
     // Normalise conversations for transfer, to enable readability for LLM upload
     const normalised = normaliseConversations(allConversations);
@@ -188,6 +210,20 @@ async function transferToBridge(allConversations, allAttachments) {
     // Cleanup to ensure zero-retention
     allConversations.length = 0;
     allAttachments.length = 0;
+}
+
+async function getServerURL() {
+    return new Promise((resolve) => {
+        chrome.storage.sync.get(["llmServerURL"], (result) => {
+            resolve(result.llmServerURL || "http://localhost:3000");
+        });
+    });
+}
+
+async function setServerURL(url) {
+    return new Promise((resolve) => {
+        chrome.storage.sync.set({ llmServerURL: url }, resolve);
+    });
 }
 
 function normaliseConversations(allConversations){
@@ -445,30 +481,6 @@ async function fetchAndStoreFile(url, filename) {
     }
 }
 
-// function waitForModalAndClose() {
-//     return new Promise((resolve) => {
-//         const observer = new MutationObserver(() => {
-//             const modal = document.querySelector('[role="dialog"]');
-//             if (!modal) return;
-
-//             const closeBtn =
-//                 modal.querySelector('button[aria-label="Close"]') ||
-//                 modal.querySelector('button');
-
-//             if (closeBtn){
-//                 closeBtn.click();
-//             } else {
-//                 modal.remove();
-//             }
-
-//         });
-
-//         observer.observe(document.body, {
-//             childList: true,
-//             subtree: true,
-//         });
-//     });
-// }
 
 // --- Open a conversation and wait for messages ---
 async function openConversationAndExport(link) {
@@ -528,6 +540,8 @@ async function exportAllConversations() {
 
 
 }
+
+
 
 
 
