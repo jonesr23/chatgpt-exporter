@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Chat Export MVP",
   "version": "0.1",
-  "permissions": ["activeTab", "scripting", "downloads", "webRequest"],
+  "permissions": ["activeTab", "scripting", "downloads", "webRequest", "storage"],
   "host_permissions": ["https://chatgpt.com/*"],
   "action": {
     "default_title": "Export current chat"
