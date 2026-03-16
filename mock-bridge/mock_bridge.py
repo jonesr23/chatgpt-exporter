@@ -17,17 +17,19 @@ FILENAME_DICT = {}  # Temp -> Stored
 if not os.path.exists(UPLOAD_ROOT):
     os.makedirs(UPLOAD_ROOT)
 
+# Send conversation prompt to ollama model
 def call_ollama(prompt, filenames, session_path, model_name=MODEL_NAME, ollama_url= OLLAMA_URL):
     images = []
     files = []
 
+    # Get encoded data for all attachments ready to attach to prompt
     for file in filenames:
-
+        
         file_path = os.path.join(session_path, FILENAME_DICT.get(file))
-
+        # Guess file type 
         mime_type, _ = mimetypes.guess_type(file_path)
 
-
+        # Open and encode file
         with open(file_path, "rb") as f:
             encoded = base64.b64encode(f.read()).decode("ascii")
 
@@ -45,7 +47,7 @@ def call_ollama(prompt, filenames, session_path, model_name=MODEL_NAME, ollama_u
                 "type": mime_type or "application/octet-stream",
                 "data": encoded
             })
-
+    # Create dictionary and load with attachments
     payload_dict = {
         "model": model_name,
         "prompt": prompt,
@@ -59,18 +61,18 @@ def call_ollama(prompt, filenames, session_path, model_name=MODEL_NAME, ollama_u
         payload_dict["files"] = files
 
     payload = json.dumps(payload_dict).encode("utf-8")
-
+    # Create request for Ollama model
     req = urllib.request.Request(
         ollama_url,
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST"
     )
-
+    # Send prompt to model
     with urllib.request.urlopen(req) as response:
         return json.loads(response.read())
 
-
+# Serverside bridge for sending conversations to LLM 
 class MockBridge(BaseHTTPRequestHandler):
 
     def _set_json(self):
@@ -92,7 +94,9 @@ class MockBridge(BaseHTTPRequestHandler):
 
         if self.path == "/session/start":
             self._set_json()
+            # Create unique ID for current session with client
             session_id = str(uuid.uuid4())
+            # Create folder in local storage for attachments and conversation data
             session_path = os.path.join(UPLOAD_ROOT, session_id)
             os.makedirs(session_path, exist_ok=True)
 
@@ -113,19 +117,19 @@ class MockBridge(BaseHTTPRequestHandler):
 
             session_path = os.path.join(UPLOAD_ROOT, session_id)
             os.makedirs(session_path, exist_ok=True)
-
+            # Set storing filenames for attachments
             filenames = set()
 
             for attachment in data['conversation'].get('attachments', []):
                 filenames.add(attachment['filename'])
-
+            # Store conversation in session path
             file_path = os.path.join(session_path, f"conversation_{uuid.uuid4()}.json")
 
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
 
             print(f"Saved conversation JSON to {file_path}")
-
+            # Create prompt to be sent to model
             prompt = f"""
             Here is a conversation history in JSON format:
 
@@ -161,9 +165,9 @@ class MockBridge(BaseHTTPRequestHandler):
             temp_filename = form.getvalue("tempFilename")
 
             if file_item.filename:
-
+                # Store reference from temp_filename to actual filename
                 FILENAME_DICT[temp_filename] = file_item.filename
-
+                
                 session_path = os.path.join(UPLOAD_ROOT, session_id)
                 os.makedirs(session_path, exist_ok=True)
 
@@ -184,6 +188,7 @@ class MockBridge(BaseHTTPRequestHandler):
 
 
 def run(port=3000):
+    # Run as HTTP server
     server_address = ('', port)
     httpd = HTTPServer(server_address, MockBridge)
     print(f"Mock bridge running on http://localhost:{port}")
