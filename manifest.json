@@ -1,7 +1,8 @@
+// Manifest for chrome extension
 {
   "manifest_version": 3,
-  "name": "Chat Export MVP",
-  "version": "0.1",
+  "name": "ChatGPT Conversation Exporter",
+  "version": "1.0",
   "permissions": ["activeTab", "scripting", "downloads", "webRequest", "storage"],
   "host_permissions": ["https://chatgpt.com/*"],
   "action": {
