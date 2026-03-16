@@ -1,26 +1,27 @@
 console.log("extract.js loaded");
 
-// --- Main initialization ---
+// Main initialisation
 (async () => {
   
 
     try {
-        // await waitForJSZip();
-        // console.log("JSZip loaded:", !!window.JSZip);
-
+        // Check if exporter is initialised
         if (window.__CHATGPT_EXPORTER__) {
             console.log("Exporter already initialised");
             return;
         }
 
+        // Flag as initialised
         window.__CHATGPT_EXPORTER__ = true;
 
+        // Add listener for all conversation export button
         chrome.runtime.onMessage.addListener((msg) => {
             if (msg.type === "EXPORT") {
                 exportAllConversations();
             }
         });
 
+        // Add listener for adding a new attachment url
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (msg.type === "ATTACHMENT_URL") {
                 console.log("Received attachment URL from background:", msg.url);
@@ -31,15 +32,18 @@ console.log("extract.js loaded");
             }
         });
 
-        // Auto-run
+        // Add export button at beginning of initialisation
         insertExportButton();
 
     } catch (err) {
-        console.error("JSZip failed to load:", err);
+        console.error("Error initialising exporter: ", err);
     }
 })();
 
+// Set new server url via user input
 async function promptServerURL() {
+  
+    // Get current url to use as default for prompt
     const current = await getServerURL();
 
     const url = prompt("Enter LLM server URL:", current);
@@ -47,7 +51,9 @@ async function promptServerURL() {
     if (!url) return;
 
     try {
-        new URL(url); // validate
+        // Check input is a valid url
+        new URL(url); 
+        // Set the new url
         await setServerURL(url);
         alert("Server URL saved.");
     } catch {
@@ -55,10 +61,11 @@ async function promptServerURL() {
     }
 }
 
-
+// Insert export button into html
 function insertExportButton() {
+    // Check container doesn't already exist
     if (document.getElementById("chatgpt-export-container")) return;
-
+    // Create container for button
     const container = document.createElement("div");
     container.id = "chatgpt-export-container";
 
@@ -68,6 +75,7 @@ function insertExportButton() {
     container.style.zIndex = "9999";
     container.style.fontFamily = "system-ui, sans-serif";
 
+    // Create export button
     const button = document.createElement("button");
     button.id = "chatgpt-export-btn";
     button.innerText = "Export";
@@ -82,6 +90,7 @@ function insertExportButton() {
     button.style.boxShadow = "0 4px 14px rgba(0,0,0,0.25)";
     button.style.transition = "all 0.2s ease";
 
+    // Change look when hovered over
     button.onmouseenter = () => {
         button.style.transform = "translateY(-2px)";
         button.style.boxShadow = "0 6px 18px rgba(0,0,0,0.3)";
@@ -92,9 +101,12 @@ function insertExportButton() {
         button.style.boxShadow = "0 4px 14px rgba(0,0,0,0.25)";
     };
 
+    // Toggle dropdown on click
     button.onclick = () => toggleDropdown(container);
 
+    // Add button to container
     container.appendChild(button);
+    // Add container to document
     document.body.appendChild(container);
 }
 
@@ -107,7 +119,9 @@ const observer = new MutationObserver(() => {
     insertExportButton();
 });
 
+// Toggle dropdown under export button
 function toggleDropdown(container) {
+    // Check dropdown doesnt already exist
     const existing = document.getElementById("chatgpt-export-dropdown");
 
     if (existing) {
@@ -115,6 +129,7 @@ function toggleDropdown(container) {
         return;
     }
 
+    // Create dropdown
     const dropdown = document.createElement("div");
     dropdown.id = "chatgpt-export-dropdown";
 
@@ -129,23 +144,24 @@ function toggleDropdown(container) {
     dropdown.style.overflow = "hidden";
     dropdown.style.animation = "fadeInUp 0.15s ease";
 
+    // Add option for single export
     dropdown.appendChild(createOption(
         "Export Current Conversation",
         exportCurrentConversation
     ));
-
+    // Add option for multi-export
     dropdown.appendChild(createOption(
         "Export All Conversations",
         exportAllConversations
     ));
-
+    // Add option to change url
     dropdown.appendChild(createOption(
         "Set Server URL",
         promptServerURL
     ));
-
+    // Add dropdown to container
     container.appendChild(dropdown);
-
+    // On click of option close dropdown
     document.addEventListener("click", function close(e) {
         if (!container.contains(e.target)) {
             dropdown.remove();
@@ -153,8 +169,9 @@ function toggleDropdown(container) {
         }
     });
 }
-
+// Create option for dropdown
 function createOption(label, handler) {
+    // Create option
     const option = document.createElement("div");
 
     option.innerText = label;
@@ -163,7 +180,7 @@ function createOption(label, handler) {
     option.style.cursor = "pointer";
     option.style.fontSize = "14px";
     option.style.transition = "background 0.15s";
-
+    // Change look when hovered over
     option.onmouseenter = () => {
         option.style.background = "#f5f5f5";
     };
@@ -171,7 +188,7 @@ function createOption(label, handler) {
     option.onmouseleave = () => {
         option.style.background = "transparent";
     };
-
+    // On click run corresponding function and  remove dropdown
     option.onclick = async () => {
         document.getElementById("chatgpt-export-dropdown")?.remove();
         await handler();
@@ -184,9 +201,10 @@ insertExportButton();
 
 observer.observe(document.body, { childList: true, subtree: true});
 
+// Transfer all conversations and attachments to bridge
 async function transferToBridge(allConversations, allAttachments) {
     console.log("Starting secure transfer...");
-
+    // Get url from chrome storage
     const llmURL = await getServerURL();
 
     // Normalise conversations for transfer, to enable readability for LLM upload
@@ -212,23 +230,25 @@ async function transferToBridge(allConversations, allAttachments) {
     allAttachments.length = 0;
 }
 
+// Get url from chrome storage
 async function getServerURL() {
     return new Promise((resolve) => {
         chrome.storage.sync.get(["llmServerURL"], (result) => {
+            // Default to localhost:3000
             resolve(result.llmServerURL || "http://localhost:3000");
         });
     });
 }
-
+// Store server url in chrome storage
 async function setServerURL(url) {
     return new Promise((resolve) => {
         chrome.storage.sync.set({ llmServerURL: url }, resolve);
     });
 }
 
+// Format conversations to be readable at LLM-side of bridge
 function normaliseConversations(allConversations){
 
-    // Format conversations to be readable at LLM-side of bridge
     return allConversations.map(conv => ({
         title: conv.title,
         source: "chatgpt",
@@ -245,8 +265,8 @@ function normaliseConversations(allConversations){
     }));
 }
 
+// POST message to LLM server to start upload session
 async function startBridgeSession(llmURL) {
-    // POST message to LLM server to start upload session
     const res = await fetch(`${llmURL}/session/start` , {
         method: "POST",
         headers: {
@@ -260,8 +280,9 @@ async function startBridgeSession(llmURL) {
     // Expects { sessionId, uploadToken}
 }
 
+// POST message to LLM server to upload a single conversation
 async function uploadConversation(sessionId, token, conversation, llmURL) {
-    // POST message to LLM server to upload a single conversation
+    
     const res = await fetch(`${llmURL}/upload`, {
         method: "POST",
         headers: {
@@ -283,7 +304,7 @@ async function uploadConversation(sessionId, token, conversation, llmURL) {
 
 
 
-
+// Upload attachments to server
 async function uploadAttachments(sessionId, token, attachments, llmURL) {
     // Loop through all attachments and upload individually
     for (const att of attachments) {
@@ -329,7 +350,7 @@ async function uploadAttachments(sessionId, token, attachments, llmURL) {
     }
 }
 
-// --- Export a single conversation into memory ---
+// Export a single conversation into memory
 async function runExportForConversation() {
 
     // Delay function
@@ -379,8 +400,7 @@ async function runExportForConversation() {
                 delay(5000).then(() => null)
             ]);
 
-            console.log("5 seconds? " + url);
-
+            // Create temporary filename and add to attachments list
             if (url) {
                 const uuid = window.crypto.randomUUID();
 
@@ -393,7 +413,7 @@ async function runExportForConversation() {
                 console.log(`${attachment.filename} stored`);
             }
         }
-
+        // Add images to attachments list
         imgs.forEach(img => {
             // Ensure images are not repeatedly uploaded
             if (!img.src || seen.has(img.src)) return;
@@ -415,9 +435,7 @@ async function runExportForConversation() {
             attachments.push(attachment);
             console.log(`Role: ${role}, \nContent: ${content}, \nAttachments: ${attachment.filename}`);
         });
-
-        // GOT TO HERE
-
+        // Add message to conversation for json
         if (content || msgAttachments.length) {
             console.log(`Pushing message ${conversation.length + 1} to conversation`);
             conversation.push({ role, content, attachments: msgAttachments });
@@ -444,6 +462,7 @@ async function runExportForConversation() {
     
 }
 
+// After clicking attachment button wait for URL to be returned
 function waitForAttachment() {
     return new Promise(resolve => {
         function listener(msg) {
@@ -456,6 +475,7 @@ function waitForAttachment() {
     });
 }
 
+// Return file based on url
 async function fetchAndStoreFile(url, filename) {
     try {
         const res = await fetch(url, {
@@ -482,7 +502,7 @@ async function fetchAndStoreFile(url, filename) {
 }
 
 
-// --- Open a conversation and wait for messages ---
+// Open a conversation and wait for messages
 async function openConversationAndExport(link) {
     return new Promise((resolve) => {
         const observer = new MutationObserver(async (mutations, obs) => {
@@ -504,9 +524,8 @@ async function exportCurrentConversation() {
     console.log("Exporting current conversation...");
     const convData = await runExportForConversation();
     if (convData) {
-        // Do the export or processing for just the current conversation
         console.log("Current Conversation Exported:", convData);
-        // You can now transfer this data to your server or download as required
+        // Transfer conversation to bridge
         await transferToBridge([convData], convData.attachments);
     } else {
         console.log("No conversation data found to export.");
@@ -514,17 +533,20 @@ async function exportCurrentConversation() {
 }
 
 
-// --- Main batch export ---
+// Export all conversations in chatgpt sidebar 
 async function exportAllConversations() {
     console.log("Exporting all conversations...");
+    // Get the conversations in sidebar
     const sidebarLinks = document.querySelectorAll('#history a[data-sidebar-item="true"]');
     const allConversations = [];
     const allAttachments = [];
     let convIndex = 0;
 
+    // For each conversation...
     for (const link of sidebarLinks) {
         convIndex++;
         console.log(`Opening conversation ${convIndex}: ${link.innerText}`);
+        // Open conversation by clicking sidebar link 
         const convData = await openConversationAndExport(link);
         if (convData) {
             allConversations.push(convData);
