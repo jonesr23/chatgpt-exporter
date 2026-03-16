@@ -10,11 +10,11 @@ chrome.action.onClicked.addListener(async (tab) => {
         async () => {
             if (chrome.runtime.lastError) {
                 // Content script not injected yet - inject it
-                console.log("Injecting JSZIP + extract.js")
+                console.log("Injecting extract.js")
 
                 await chrome.scripting.executeScript({
                     target: { tabId: tab.id },
-                    files: ["jszip.min.js", "extract.js"]
+                    files: ["extract.js"]
                 });
             }
         }
@@ -32,6 +32,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     });
 });
 
+// Listen for download requests for conversation attachments and send url to extract.js
 chrome.webRequest.onBeforeRequest.addListener(
     (details) => {
         if (details.url.includes("/backend-api/estuary/content")) {
